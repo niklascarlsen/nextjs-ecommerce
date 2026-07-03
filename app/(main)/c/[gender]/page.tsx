@@ -3,7 +3,7 @@ import Newsletter from '@/components/shared/Newsletter';
 import ProductFilterWrapper from '@/components/products/product-grid/ProductFilterWrapper';
 import {notFound} from 'next/navigation';
 import {Metadata} from 'next';
-import {parseSortParam} from '@/utils/filterSort';
+import {parseFilterSearchParams} from '@/utils/filterSort';
 
 interface GenderPageProps {
   params: Promise<{
@@ -14,27 +14,9 @@ interface GenderPageProps {
 
 async function getGenderProducts(
   gender: string,
-  searchParams: {[key: string]: string | string[] | undefined}
+  searchParams: {[key: string]: string | string[] | undefined},
 ) {
-  const colorParam = searchParams.color;
-  const sizeParam = searchParams.sizes;
-  const sortParam = searchParams.sort;
-
-  const color = colorParam
-    ? typeof colorParam === 'string'
-      ? colorParam.split(',').filter(Boolean)
-      : colorParam
-    : undefined;
-  const sizes = sizeParam
-    ? typeof sizeParam === 'string'
-      ? sizeParam.split(',').filter(Boolean)
-      : sizeParam
-    : undefined;
-
-  // t.ex price_desc -> sort: 'price', order: 'desc'
-  const {sort, order} = parseSortParam(
-    typeof sortParam === 'string' ? sortParam : undefined
-  );
+  const {color, sizes, sort, order} = parseFilterSearchParams(searchParams);
 
   const result = await getInfiniteProducts({
     limit: 8,
@@ -46,7 +28,7 @@ async function getGenderProducts(
     sort,
     order,
     metadata: true,
-    includeCount: true,
+    includeCount: false,
   });
   if (!result.products || result.products.length === 0) {
     notFound();
@@ -79,12 +61,11 @@ export default async function GenderPage({
   return (
     <div className='mx-auto'>
       <ProductFilterWrapper
+        mode='category'
         initialProducts={result.products}
         initialHasMore={result.hasMore}
         metadata={result.metadata}
-        totalCount={result.totalCount}
         gender={gender}
-        genderCategoryTitle={`Allt inom ${gender}`}
       />
 
       <Newsletter />

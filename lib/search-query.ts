@@ -8,13 +8,16 @@ export function normalizeProductSearchQuery(query: string | undefined): string {
 }
 
 /**
- * Bidirectional synonym groups for query expansion. The English FTS stemmer
- * treats these irregular plurals as distinct lexemes (man/men, woman/women),
- * so searching "man" never matches the stored "men" gender without expansion.
+ * Bidirectional synonym groups for query expansion. Two cases:
+ * irregular plurals the English stemmer keeps distinct (man/men, woman/women),
+ * and compound spelling variants Postgres tokenizes into different lexemes
+ * (concatenated "tshirt" vs hyphenated "t-shirt"). The spaced "t shirt" needs
+ * no entry — to_tsvector already indexes "t-shirt" as its parts t + shirt.
  */
 const SEARCH_SYNONYM_GROUPS: readonly string[][] = [
   ['man', 'men'],
   ['woman', 'women'],
+  ['t-shirt', 'tshirt', 'tshirts'],
 ];
 
 /** All equivalents of a term (lowercased), or just the term itself. */
@@ -26,16 +29,19 @@ function expandSynonyms(term: string): string[] {
 
 /**
  * Prefix tsquery string: "nike air" -> "nike:* & air:*", or null when search
- * should be omitted. Terms are split on any non-alphanumeric character (so
- * "t-shirt" -> "t:* & shirt:*", matching the lexemes to_tsvector produces),
- * which leaves tokens free of tsquery syntax. Synonyms expand to an OR group,
- * e.g. "man" -> "(man:* | men:*)". The result must always be passed as a bound
- * parameter to to_tsquery('english', ...).
+ * should be omitted. Hyphenated compounds stay intact so to_tsquery uses the
+ * same parser as to_tsvector ("t-shirt" -> "t-shirt:*", not "t:* & shirt:*").
+ * Other punctuation splits terms, leaving tokens free of tsquery syntax.
+ * Synonyms expand to an OR group, e.g. "man" -> "(man:* | men:*)". The result
+ * must always be passed as a bound parameter to to_tsquery('english', ...).
  */
 export function productSearchTsQuery(query: string | undefined): string | null {
   const normalized = normalizeProductSearchQuery(query);
   if (!normalized) return null;
-  const terms = normalized.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const terms = normalized
+    .split(/[^\p{L}\p{N}-]+/u)
+    .map((t) => t.replace(/^-+|-+$/g, ''))
+    .filter(Boolean);
   if (!terms.length) return null;
   return terms
     .map((t) => {

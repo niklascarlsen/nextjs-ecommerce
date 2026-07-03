@@ -1,5 +1,39 @@
 import type {SortParams} from '@/lib/types/query-types';
 
+type PageSearchParams = {[key: string]: string | string[] | undefined};
+
+export type ParsedFilterParams = SortParams & {
+  color?: string[];
+  sizes?: string[];
+  hasFilterParams: boolean;
+};
+
+function parseListParam(param?: string | string[]): string[] | undefined {
+  if (!param) return undefined;
+  const list = typeof param === 'string' ? param.split(',') : param;
+  const filtered = list.filter(Boolean);
+  return filtered.length > 0 ? filtered : undefined;
+}
+
+// Parses color/sizes/sort page searchParams shared by category and search pages
+export function parseFilterSearchParams(
+  searchParams: PageSearchParams,
+): ParsedFilterParams {
+  const color = parseListParam(searchParams.color);
+  const sizes = parseListParam(searchParams.sizes);
+  const sortParam =
+    typeof searchParams.sort === 'string' ? searchParams.sort : undefined;
+  const {sort, order} = parseSortParam(sortParam);
+
+  return {
+    color,
+    sizes,
+    sort,
+    order,
+    hasFilterParams: !!color || !!sizes || !!sortParam,
+  };
+}
+
 export function parseSortParam(sortParam?: string | null): SortParams {
   if (!sortParam) return {sort: 'id', order: 'asc'};
 

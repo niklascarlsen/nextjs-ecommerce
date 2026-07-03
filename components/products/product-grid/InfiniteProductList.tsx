@@ -1,7 +1,6 @@
 'use client';
 
 import {useEffect, useMemo, useRef} from 'react';
-import type {ReactNode} from 'react';
 import {useInView} from 'react-intersection-observer';
 import {useSearchParams} from 'next/navigation';
 import type {ProductCard} from '@/lib/types/db-types';
@@ -31,28 +30,17 @@ export type InfiniteProductListProps =
       /** Search mode of the SSR first page (fts or fuzzy fallback). */
       initialSearchMode?: SearchMode;
       query: string;
-      totalCount?: number;
       className?: string;
-      /** Custom header; default is "Search results for …". */
-      header?: ReactNode;
+      gridLayout?: GridLayout;
     };
 
 export default function InfiniteProductList(props: InfiniteProductListProps) {
   const searchParams = useSearchParams();
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const color =
-    props.mode === 'category'
-      ? searchParams.get('color')?.split(',').filter(Boolean) || []
-      : [];
-  const sizes =
-    props.mode === 'category'
-      ? searchParams.get('sizes')?.split(',').filter(Boolean) || []
-      : [];
-  const sort =
-    props.mode === 'category'
-      ? searchParams.get('sort') || undefined
-      : undefined;
+  const color = searchParams.get('color')?.split(',').filter(Boolean) || [];
+  const sizes = searchParams.get('sizes')?.split(',').filter(Boolean) || [];
+  const sort = searchParams.get('sort') || undefined;
 
   const infiniteArgs =
     props.mode === 'category'
@@ -67,6 +55,9 @@ export default function InfiniteProductList(props: InfiniteProductListProps) {
         }
       : {
           query: props.query,
+          color,
+          sizes,
+          sort,
           initialProducts: props.initialProducts,
           initialHasMore: props.initialHasMore,
           initialSearchMode: props.initialSearchMode,
@@ -152,46 +143,10 @@ export default function InfiniteProductList(props: InfiniteProductListProps) {
     </>
   );
 
-  if (props.mode === 'category') {
-    return (
-      <div ref={containerRef} className={props.className}>
-        <ProductGrid products={displayProducts} gridLayout={props.gridLayout} />
-        {sentinel}
-      </div>
-    );
-  }
-
-  const headerClassName =
-    'text-sm md:text-base uppercase font-medium px-4 sm:px-8 pt-2 pb-5';
-
-  const isFuzzy = props.initialSearchMode === 'fuzzy';
-
-  const fuzzyHeader = (
-    <h2 className={headerClassName}>
-      No exact matches for &quot;{props.query}&quot; — showing similar products
-    </h2>
-  );
-
-  const ftsHeader = (
-    <h2 className={headerClassName}>
-      Search results for &quot;{props.query}&quot;
-      {props.totalCount ? (
-        <span className='ml-2'>({props.totalCount})</span>
-      ) : null}
-    </h2>
-  );
-
-  const defaultHeader = isFuzzy ? fuzzyHeader : ftsHeader;
-
   return (
-    <>
-      <div className='w-full'>
-        {props.header ?? defaultHeader}
-        <div ref={containerRef} className={props.className}>
-          <ProductGrid products={displayProducts} />
-        </div>
-      </div>
-      <div className='w-full'>{sentinel}</div>
-    </>
+    <div ref={containerRef} className={props.className}>
+      <ProductGrid products={displayProducts} gridLayout={props.gridLayout} />
+      {sentinel}
+    </div>
   );
 }

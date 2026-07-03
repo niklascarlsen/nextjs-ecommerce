@@ -1,43 +1,57 @@
 import type {Metadata} from 'next';
 import {getInfiniteProducts} from '@/actions/product.actions';
 import type {Result} from '@/lib/types/query-types';
-import InfiniteProductList from '@/components/products/product-grid/InfiniteProductList';
+import ProductFilterWrapper from '@/components/products/product-grid/ProductFilterWrapper';
+import {parseFilterSearchParams} from '@/utils/filterSort';
 
 type Props = {
-  searchParams: Promise<{q?: string}>;
+  searchParams: Promise<{[key: string]: string | string[] | undefined}>;
 };
 
 export async function generateMetadata({
   searchParams,
 }: Props): Promise<Metadata> {
-  const {q = ''} = await searchParams;
+  const {q} = await searchParams;
+  const query = typeof q === 'string' ? q : '';
 
   return {
-    title: q ? `Search results for "${q}" | NC` : 'Search products | NC',
-    description: q
-      ? `See our products matching "${q}"`
+    title: query ? `Search results for "${query}"` : 'Search products',
+    description: query
+      ? `See our products matching "${query}"`
       : 'Search our product range',
   };
 }
 
 export default async function SearchPage({searchParams}: Props) {
-  const {q = ''} = await searchParams;
+  const resolvedSearchParams = await searchParams;
+  const q =
+    typeof resolvedSearchParams.q === 'string' ? resolvedSearchParams.q : '';
+  const {color, sizes, sort, order, hasFilterParams} =
+    parseFilterSearchParams(resolvedSearchParams);
 
   const result: Result = q
     ? await getInfiniteProducts({
         query: q,
         limit: 8,
+        color,
+        sizes,
+        sort,
+        order,
+        metadata: true,
         includeCount: true,
       })
     : {products: [], hasMore: false};
 
-  if (!result.products || result.products.length === 0) {
+  const noResults = !result.products || result.products.length === 0;
+
+  // Only bail out fully when no filters are active; with filters the wrapper
+  // stays so they can be cleared.
+  if (noResults && !hasFilterParams) {
     return (
       <div className='flex items-center justify-center min-h-[calc(100vh-400px)]'>
         <div className='text-center max-w-full '>
-          <p className='px-6 text-sm md:text-base font-medium break-words '>
-            No products were found for{' '}
-            <span className='italic font-medium'>{`"${q}"`}</span>.
+          <p className='px-6 uppercase text-base md:text-lg font-medium break-words '>
+            No matches for <span className='italic'>{`"${q}"`}</span>.
           </p>
         </div>
       </div>
@@ -54,13 +68,14 @@ export default async function SearchPage({searchParams}: Props) {
   return (
     <div className='w-full flex justify-center py-4'>
       <div className='w-full'>
-        <InfiniteProductList
+        <ProductFilterWrapper
           mode='search'
           query={q}
-          initialHasMore={result.hasMore}
           initialProducts={result.products}
+          initialHasMore={result.hasMore}
           initialSearchMode={result.searchMode}
           totalCount={result.totalCount}
+          metadata={result.metadata}
         />
       </div>
     </div>

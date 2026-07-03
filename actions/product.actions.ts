@@ -1,22 +1,24 @@
 'use server';
 
-import {and, count} from 'drizzle-orm';
+import {and, asc, count, sql} from 'drizzle-orm';
 import {productsTable} from '@/drizzle/db/schema';
 import type {Params, Result, SearchMode} from '@/lib/types/query-types';
 import {
-  createSearchFilters,
-  createSearchRankExpr,
-  buildRankCursorPagination,
-  createRelevanceOrderClause,
+  buildRelevanceOrderBy,
   buildCategoryGenderFilters,
   buildSizeColorFilters,
   buildIsNewFilter,
-  buildCursorPaginationWhereClause,
-  createSortOrderClause,
-  fetchAvailableFilterOptions,
+  buildPaginationWhere,
+  buildSortOrderBy,
   isNewSql,
 } from '@/actions/lib/infiniteQuery-builder';
+import {
+  buildSearchFilters,
+  buildSearchRankExpr,
+  shouldFallBackToFuzzy,
+} from '@/actions/lib/search-builder';
 import {productSearchTsQuery} from '@/lib/search-query';
+import {sortSizes} from '@/utils/filterSort';
 import {db} from '@/drizzle/index';
 
 export async function getInfiniteProducts({
@@ -44,22 +46,24 @@ export async function getInfiniteProducts({
     ];
 
     const runPage = async (mode: SearchMode) => {
-      const searchConditions = hasSearch ? createSearchFilters(query, mode) : [];
-      // Relevance ordering only on the default sort; explicit price/name
+      const searchConditions = hasSearch ? buildSearchFilters(query, mode) : [];
+      // Relevance ordering only on the default sort, explicit price/name
       // sorts keep their ordering and cursor semantics.
       const rankExpr =
-        hasSearch && sort === 'id' ? createSearchRankExpr(query, mode) : null;
+        hasSearch && sort === 'id' ? buildSearchRankExpr(query, mode) : null;
       const baseConditions = [...searchConditions, ...staticConditions];
 
-      const useRankCursor =
-        rankExpr !== null && lastId !== null && typeof lastValue === 'number';
-      const paginationConditions = useRankCursor
-        ? buildRankCursorPagination(rankExpr!, lastId!, lastValue as number)
-        : buildCursorPaginationWhereClause(sort, order, lastId, lastValue);
+      const paginationConditions = buildPaginationWhere({
+        sort,
+        order,
+        lastId,
+        lastValue,
+        rankExpr,
+      });
 
       const orderByFields = rankExpr
-        ? createRelevanceOrderClause(rankExpr)
-        : createSortOrderClause(sort, order);
+        ? buildRelevanceOrderBy(rankExpr)
+        : buildSortOrderBy(sort, order);
 
       const productWhereConditions = [
         ...baseConditions,
@@ -95,9 +99,7 @@ export async function getInfiniteProducts({
     let mode: SearchMode = searchMode ?? 'fts';
     let {rows, baseConditions} = await runPage(mode);
 
-    // First-page FTS miss -> trigram fallback for typos. Later pages carry
-    // the decided mode via searchMode and never re-decide.
-    if (hasSearch && mode === 'fts' && lastId === null && rows.length === 0) {
+    if (hasSearch && shouldFallBackToFuzzy(mode, lastId, rows.length)) {
       mode = 'fuzzy';
       ({rows, baseConditions} = await runPage(mode));
     }
@@ -123,7 +125,13 @@ export async function getInfiniteProducts({
         ? db.select({count: count()}).from(productsTable).where(baseWhereClause)
         : Promise.resolve(null),
       metadata
-        ? fetchAvailableFilterOptions(gender, category, isNewOnly)
+        ? fetchAvailableFilterOptions({
+            gender,
+            category,
+            isNewOnly,
+            query: hasSearch ? query : undefined,
+            searchMode: mode,
+          })
         : Promise.resolve(null),
     ]);
 
@@ -151,4 +159,73 @@ export async function getInfiniteProducts({
         : undefined,
     };
   }
+}
+
+/**
+ * Distinct colors, sizes, and categories available for the current filter
+ * scope. Not exported: only getInfiniteProducts needs it, so it is not
+ * exposed as a server action.
+ */
+async function fetchAvailableFilterOptions({
+  gender,
+  category,
+  isNewOnly = false,
+  query,
+  searchMode = 'fts',
+}: {
+  gender: string | null;
+  category: string | null;
+  isNewOnly?: boolean;
+  query?: string;
+  searchMode?: SearchMode;
+}) {
+  const conditions = [
+    ...buildCategoryGenderFilters(category, gender),
+    ...buildIsNewFilter(isNewOnly),
+    ...(query ? buildSearchFilters(query, searchMode) : []),
+  ];
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const colorsQuery = db
+    .selectDistinct({color: productsTable.color})
+    .from(productsTable)
+    .where(whereClause)
+    .orderBy(asc(productsTable.color));
+
+  const categoriesQuery = db
+    .selectDistinct({category: productsTable.category})
+    .from(productsTable)
+    .where(whereClause);
+
+  const sizesQuery = db
+    .select({
+      size: sql<string>`jsonb_array_elements_text(${productsTable.sizes})`.as(
+        'size',
+      ),
+    })
+    .from(productsTable)
+    .where(
+      whereClause
+        ? and(whereClause, sql`jsonb_typeof(${productsTable.sizes}) = 'array'`)
+        : sql`jsonb_typeof(${productsTable.sizes}) = 'array'`,
+    )
+    .groupBy(sql`size`);
+
+  const [colorRows, categoryRows, sizeRows] = await Promise.all([
+    colorsQuery,
+    categoriesQuery,
+    sizesQuery,
+  ]);
+
+  const availableColors = colorRows.map((r) => r.color).filter(Boolean);
+  const availableCategories = categoryRows
+    .map((r) => r.category)
+    .filter(Boolean);
+  const availableSizes = sortSizes(sizeRows.map((r) => r.size));
+
+  return {
+    availableColors,
+    availableSizes,
+    availableCategories,
+  };
 }

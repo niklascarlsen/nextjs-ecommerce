@@ -15,12 +15,10 @@ import {Accordion} from '@/components/shared/ui/Accordion';
 import {SiKlarna} from 'react-icons/si';
 import Image from 'next/image';
 import {CiCreditCard1} from 'react-icons/ci';
-import {useCart} from '@/context/CartProvider';
 import {createOrder} from '@/actions/orders.actions';
 import {toast} from 'sonner';
 import {CreateOrderResult} from '@/lib/types/db-types';
 
-// Type guard: narrow successful order result
 function isSuccessfulOrder(
   result: CreateOrderResult,
 ): result is {success: true; orderId: string} {
@@ -34,7 +32,6 @@ interface PaymentStepProps {
 
 export default function PaymentStep({onNext, deliveryData}: PaymentStepProps) {
   const [isLoading, setIsLoading] = useState(false);
-  const {cartItems, totalPrice} = useCart();
 
   const form = useForm<PaymentFormData>({
     resolver: zodResolver(paymentSchema),
@@ -63,12 +60,7 @@ export default function PaymentStep({onNext, deliveryData}: PaymentStepProps) {
       if (!deliveryData) {
         throw new Error('Delivery data is required');
       }
-      const result = await createOrder(
-        cartItems,
-        deliveryData,
-        paymentInfo,
-        totalPrice,
-      );
+      const result = await createOrder(deliveryData, paymentInfo);
       if (!isSuccessfulOrder(result)) {
         throw new Error(result.error || 'Failed to create order');
       }
@@ -111,7 +103,6 @@ export default function PaymentStep({onNext, deliveryData}: PaymentStepProps) {
             }
           }}
         >
-          {/* KORT */}
           <Accordion.Item
             value='card'
             className='border overflow-hidden  transition-colors duration-200 data-[state=open]:border-black'
@@ -164,7 +155,6 @@ export default function PaymentStep({onNext, deliveryData}: PaymentStepProps) {
             </Accordion.Content>
           </Accordion.Item>
 
-          {/* SWISH */}
           <Accordion.Item
             value='swish'
             className='border overflow-hidden  transition-colors duration-200 data-[state=open]:border-black'
@@ -203,7 +193,6 @@ export default function PaymentStep({onNext, deliveryData}: PaymentStepProps) {
             </Accordion.Content>
           </Accordion.Item>
 
-          {/* KLARNA */}
           <Accordion.Item
             value='klarna'
             className='border overflow-hidden  transition-colors duration-200 data-[state=open]:border-black'

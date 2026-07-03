@@ -4,8 +4,10 @@ import GoogleProvider from 'next-auth/providers/google';
 import GitHubProvider from 'next-auth/providers/github';
 import {db} from '@/drizzle';
 import {usersTable, accountsTable, sessionsTable} from '@/drizzle/db/schema';
-import {transferCartOnLogin} from '@/actions/cart.actions';
-import {transferFavoritesOnLogin} from '@/actions/favorites.actions';
+import {
+  transferCartOnLogin,
+  transferFavoritesOnLogin,
+} from '@/actions/lib/merge-on-login';
 import {CART_SESSION_COOKIE} from '@/utils/cookies';
 import {cookies} from 'next/headers';
 
