@@ -2,7 +2,7 @@ import {getInfiniteProducts} from '@/actions/product.actions';
 import Newsletter from '@/components/shared/Newsletter';
 import ProductFilterWrapper from '@/components/products/product-grid/ProductFilterWrapper';
 import {Metadata} from 'next';
-import {parseSortParam} from '@/utils/filterSort';
+import {parseFilterSearchParams} from '@/utils/filterSort';
 import {
   isNewCollectionSlug,
   parseCollectionSlug,
@@ -21,24 +21,7 @@ async function getCategoryProducts(
   gender: string,
   searchParams: {[key: string]: string | string[] | undefined},
 ) {
-  const colorParam = searchParams.color;
-  const sizeParam = searchParams.sizes;
-  const sortParam = searchParams.sort;
-
-  const color = colorParam
-    ? typeof colorParam === 'string'
-      ? colorParam.split(',').filter(Boolean)
-      : colorParam
-    : undefined;
-  const sizes = sizeParam
-    ? typeof sizeParam === 'string'
-      ? sizeParam.split(',').filter(Boolean)
-      : sizeParam
-    : undefined;
-
-  const {sort, order} = parseSortParam(
-    typeof sortParam === 'string' ? sortParam : undefined,
-  );
+  const {color, sizes, sort, order} = parseFilterSearchParams(searchParams);
 
   const {actualCategory, isNewOnly} = parseCollectionSlug(category);
 
@@ -53,7 +36,7 @@ async function getCategoryProducts(
     order,
     metadata: true,
     isNewOnly,
-    includeCount: true,
+    includeCount: false,
   });
   return result;
 }
@@ -98,13 +81,12 @@ export default async function CategoryPage({
   return (
     <div className='mx-auto px-0 bg-white z-10'>
       <ProductFilterWrapper
+        mode='category'
         initialProducts={result.products}
         metadata={result.metadata}
-        totalCount={result.totalCount}
         initialHasMore={result.hasMore}
         gender={gender}
         category={category}
-        genderCategoryTitle={category === 'new-now' ? 'New Now' : `${category}`}
       />
       <Newsletter />
     </div>

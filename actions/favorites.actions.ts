@@ -5,7 +5,7 @@ import {getOrCreateSessionId, getSessionId} from '@/utils/cookies';
 import type {NewFavorite} from '@/lib/types/db-types';
 import {db} from '@/drizzle/index';
 import {favoritesTable, productsTable} from '@/drizzle/db/schema';
-import {eq, and, isNull, inArray} from 'drizzle-orm';
+import {eq, and, isNull} from 'drizzle-orm';
 import {isNewSql} from '@/actions/lib/infiniteQuery-builder';
 
 export async function getFavorites() {
@@ -176,73 +176,5 @@ export async function toggleFavorite(productId: string) {
   } catch (error) {
     console.error('Error toggling favorite:', error);
     return {success: false, error: 'Failed to toggle favorite'};
-  }
-}
-
-export async function transferFavoritesOnLogin(userId: string) {
-  try {
-    const sessionId = await getSessionId();
-    if (!sessionId) return {success: true, message: 'No session_id found'};
-
-    // Load session and user favorites
-    const sessionFavorites = await db
-      .select()
-      .from(favoritesTable)
-      .where(
-        and(
-          eq(favoritesTable.session_id, sessionId),
-          isNull(favoritesTable.user_id)
-        )
-      );
-
-    if (!sessionFavorites.length)
-      return {success: true, message: 'No session favorites found'};
-
-    const userFavorites = await db
-      .select({product_id: favoritesTable.product_id})
-      .from(favoritesTable)
-      .where(eq(favoritesTable.user_id, userId));
-
-    const existingProductIds = new Set(
-      userFavorites.map((fav) => fav.product_id)
-    );
-
-    // Decide updates vs deletes in memory (no extra queries)
-    const idsToUpdate: string[] = [];
-    const idsToDelete: string[] = [];
-
-    for (const sessionFav of sessionFavorites) {
-      if (!existingProductIds.has(sessionFav.product_id)) {
-        // Unique session favorite → assign to user
-        idsToUpdate.push(sessionFav.id);
-      } else {
-        // Duplicate of user favorite → drop session row
-        idsToDelete.push(sessionFav.id);
-      }
-    }
-
-    // Bulk update rows to attach to user
-    if (idsToUpdate.length > 0) {
-      await db
-        .update(favoritesTable)
-        .set({user_id: userId, session_id: null})
-        .where(inArray(favoritesTable.id, idsToUpdate));
-    }
-
-    // Bulk delete duplicate session rows
-    if (idsToDelete.length > 0) {
-      await db
-        .delete(favoritesTable)
-        .where(inArray(favoritesTable.id, idsToDelete));
-    }
-
-    console.log('Favorites transferred successfully');
-    return {
-      success: true,
-      message: `Favorites transferred successfully (${sessionFavorites.length} items processed)`,
-    };
-  } catch (error) {
-    console.error('Unexpected error transferring favorites on login:', error);
-    return {success: false, error: 'Failed to transfer favorites'};
   }
 }

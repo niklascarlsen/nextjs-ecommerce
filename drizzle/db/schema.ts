@@ -86,18 +86,18 @@ export const productsTable = pgTable(
     published_at: timestamp('published_at', {withTimezone: true})
       .notNull()
       .defaultNow(),
-    // Weighted FTS document: name (A) ranks above brand (B), category (C), gender (D)
+    // Weighted FTS document: name (A) ranks above color (B), category (C), gender (D)
     search_vector: tsvector('search_vector').generatedAlwaysAs(
       (): SQL =>
-        sql`setweight(to_tsvector('english', ${productsTable.name}), 'A') || setweight(to_tsvector('english', ${productsTable.brand}), 'B') || setweight(to_tsvector('english', ${productsTable.category}), 'C') || setweight(to_tsvector('english', ${productsTable.gender}), 'D')`
+        sql`setweight(to_tsvector('english', ${productsTable.name}), 'A') || setweight(to_tsvector('english', ${productsTable.color}), 'B') || setweight(to_tsvector('english', ${productsTable.category}), 'C') || setweight(to_tsvector('english', ${productsTable.gender}), 'D')`
     ),
   },
   (table) => [
     index('products_search_vector_idx').using('gin', table.search_vector),
     index('products_name_trgm_idx').using('gin', table.name.op('gin_trgm_ops')),
-    index('products_brand_trgm_idx').using(
+    index('products_color_trgm_idx').using(
       'gin',
-      table.brand.op('gin_trgm_ops')
+      table.color.op('gin_trgm_ops')
     ),
     index('products_category_trgm_idx').using(
       'gin',

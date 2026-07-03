@@ -11,7 +11,7 @@ import type {
 
 import {db} from '@/drizzle/index';
 import {cartsTable, cartItemsTable, productsTable} from '@/drizzle/db/schema';
-import {eq, and, isNull, asc, inArray} from 'drizzle-orm';
+import {eq, and, isNull, asc} from 'drizzle-orm';
 import Decimal from 'decimal.js';
 
 // Helpers
@@ -250,111 +250,5 @@ export async function clearCart() {
   } catch (error) {
     console.error('Error clearing cart:', error);
     return {success: false, error: 'Failed to clear cart'};
-  }
-}
-
-export async function transferCartOnLogin(userId: string) {
-  try {
-    const sessionId = await getSessionId();
-    if (!sessionId) return {success: true, message: 'No session_id found'};
-
-    const [sessionCartResult, userCartResult] = await Promise.all([
-      db
-        .select()
-        .from(cartsTable)
-        .where(
-          and(eq(cartsTable.session_id, sessionId), isNull(cartsTable.user_id)),
-        )
-        .limit(1),
-      db
-        .select()
-        .from(cartsTable)
-        .where(eq(cartsTable.user_id, userId))
-        .limit(1),
-    ]);
-
-    const sessionCart = sessionCartResult[0];
-    if (!sessionCart)
-      return {success: true, message: 'No session cart to transfer'};
-
-    const userCart = userCartResult[0];
-
-    // No user cart yet — attach the session cart to the user.
-    if (!userCart) {
-      await db
-        .update(cartsTable)
-        .set({user_id: userId, session_id: null, updated_at: new Date()})
-        .where(eq(cartsTable.id, sessionCart.id));
-      return {success: true, message: 'Cart transferred successfully'};
-    }
-
-    // Both carts exist - merge the carts (sequential + parallel updates as neon-http has no transaction)
-    const [sessionItems, userItems] = await Promise.all([
-      db
-        .select()
-        .from(cartItemsTable)
-        .where(eq(cartItemsTable.cart_id, sessionCart.id)),
-      db
-        .select()
-        .from(cartItemsTable)
-        .where(eq(cartItemsTable.cart_id, userCart.id)),
-    ]);
-
-    if (sessionItems.length === 0) {
-      await db.delete(cartsTable).where(eq(cartsTable.id, sessionCart.id));
-      return {success: true, message: 'Cart merged successfully'};
-    }
-
-    const userItemsMap = new Map(
-      userItems.map((item) => [`${item.product_id}_${item.size}`, item]),
-    );
-
-    const itemsToUpdateQuantity: {id: string; newQuantity: number}[] = [];
-    const idsToMove: string[] = [];
-
-    for (const sessionItem of sessionItems) {
-      const key = `${sessionItem.product_id}_${sessionItem.size}`;
-      const existingUserItem = userItemsMap.get(key);
-      if (existingUserItem) {
-        itemsToUpdateQuantity.push({
-          id: existingUserItem.id,
-          newQuantity: existingUserItem.quantity + sessionItem.quantity,
-        });
-      } else {
-        idsToMove.push(sessionItem.id);
-      }
-    }
-
-    const promises: Promise<unknown>[] = [];
-
-    if (itemsToUpdateQuantity.length > 0) {
-      for (const item of itemsToUpdateQuantity) {
-        promises.push(
-          db
-            .update(cartItemsTable)
-            .set({quantity: item.newQuantity, updated_at: new Date()})
-            .where(eq(cartItemsTable.id, item.id)),
-        );
-      }
-    }
-
-    if (idsToMove.length > 0) {
-      promises.push(
-        db
-          .update(cartItemsTable)
-          .set({cart_id: userCart.id, updated_at: new Date()})
-          .where(inArray(cartItemsTable.id, idsToMove)),
-      );
-    }
-
-    await Promise.all(promises);
-
-    await db.delete(cartsTable).where(eq(cartsTable.id, sessionCart.id));
-
-    return {success: true, message: 'Cart merged successfully'};
-  } catch (error) {
-    console.error('Unexpected error transferring cart on login:', error);
-
-    return {success: false, message: 'Failed to merge cart'};
   }
 }

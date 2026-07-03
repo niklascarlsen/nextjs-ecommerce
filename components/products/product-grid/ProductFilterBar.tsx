@@ -1,5 +1,6 @@
 'use client';
 
+import {memo} from 'react';
 import type {GridLayout} from '@/components/products/product-grid/ProductGrid';
 import GridIcon from '@/components/icons/GridIcon';
 import SquareIcon from '@/components/icons/SquareIcon';
@@ -13,7 +14,7 @@ interface FilterBarProps {
   onGridLayoutChange: (layout: GridLayout) => void;
 }
 
-export default function FilterBar({
+function FilterBar({
   dialogId,
   onOpen,
   activeFilterCount,
@@ -76,3 +77,5 @@ export default function FilterBar({
     </div>
   );
 }
+
+export default memo(FilterBar);

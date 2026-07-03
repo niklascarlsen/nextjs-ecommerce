@@ -2,29 +2,33 @@
 
 import {auth} from '@/lib/auth';
 import {getSessionId} from '@/utils/cookies';
-import {CartItemWithProduct} from '@/lib/types/db-types';
+import {getCart, clearCart} from '@/actions/cart.actions';
 import {
   DeliveryFormData,
   deliverySchema,
 } from '@/lib/validators/checkout-validation';
 import {db} from '@/drizzle/index';
 import {ordersTable, orderItemsTable} from '@/drizzle/db/schema';
-import {eq, desc /* inArray */} from 'drizzle-orm';
+import {eq, desc} from 'drizzle-orm';
 import {PaymentInfo} from '@/lib/types/query-types';
 import {CreateOrderResult} from '@/lib/types/db-types';
 
+const ALLOWED_PAYMENT_METHODS: PaymentInfo['method'][] = [
+  'card',
+  'swish',
+  'klarna',
+];
+
 export async function createOrder(
-  cartItems: CartItemWithProduct[],
   deliveryInfo: DeliveryFormData,
   paymentInfo: PaymentInfo,
-  totalPrice: number
 ): Promise<CreateOrderResult> {
   const deliveryValidation = deliverySchema.safeParse(deliveryInfo);
 
   if (!deliveryValidation.success) {
     console.error(
       'Delivery validation failed:',
-      deliveryValidation.error.flatten()
+      deliveryValidation.error.flatten(),
     );
     return {
       success: false,
@@ -32,11 +36,20 @@ export async function createOrder(
     };
   }
 
+  if (!paymentInfo || !ALLOWED_PAYMENT_METHODS.includes(paymentInfo.method)) {
+    return {success: false, error: 'Invalid payment method.'};
+  }
+
   try {
     const session = await auth();
     const user = session?.user;
 
-    // neon-http: Drizzle's db.transaction() throws — use sequential inserts.
+    const {cart, cartItems, totalPrice} = await getCart();
+    if (!cart || cartItems.length === 0) {
+      return {success: false, error: 'Your cart is empty.'};
+    }
+
+    // neon-http: doesn't support transaction - using sequential inserts.
     const now = new Date();
     const newOrder = {
       user_id: user?.id,
@@ -71,6 +84,9 @@ export async function createOrder(
 
     await db.insert(orderItemsTable).values(orderItems);
 
+    // Drop the cart so a replayed request can't create a duplicate paid order
+    await clearCart();
+
     return {success: true, orderId: newlyCreatedOrder.id};
   } catch (error) {
     console.error('Error creating order:', error);
@@ -78,9 +94,12 @@ export async function createOrder(
   }
 }
 
-// 1. drizzle relations join query
-/* export async function getUserOrderById(orderId: string) {
+export async function getUserOrderById(orderId: string) {
   try {
+    const session = await auth();
+    const user = session?.user;
+    const sessionId = user ? null : await getSessionId();
+
     const order = await db.query.ordersTable.findFirst({
       where: eq(ordersTable.id, orderId),
       with: {
@@ -92,75 +111,17 @@ export async function createOrder(
       return {success: false, error: 'Order not found'};
     }
 
-    return {success: true, order};
-  } catch (error) {
-    console.error('Error fetching order:', error);
-    return {success: false, error: 'Failed to fetch order'};
-  }
-} */
+    // Check if the current user (logged in or guest) owns the order
+    const isOwner = user
+      ? order.user_id === user.id
+      : // : !!sessionId && order.session_id === sessionId;
+        sessionId
+        ? order.session_id === sessionId
+        : false;
 
-// 2. drizzle med egen join query
-export async function getUserOrderById(orderId: string) {
-  try {
-    const orderWithItems = await db
-      .select({
-        orderId: ordersTable.id,
-        orderUserId: ordersTable.user_id,
-        orderSessionId: ordersTable.session_id,
-        orderTotalAmount: ordersTable.total_amount,
-        orderPaymentInfo: ordersTable.payment_info,
-        orderStatus: ordersTable.status,
-        orderDeliveryInfo: ordersTable.delivery_info,
-        orderCreatedAt: ordersTable.created_at,
-        orderUpdatedAt: ordersTable.updated_at,
-
-        itemId: orderItemsTable.id,
-        itemOrderId: orderItemsTable.order_id,
-        itemProductId: orderItemsTable.product_id,
-        itemQuantity: orderItemsTable.quantity,
-        itemPrice: orderItemsTable.price,
-        itemName: orderItemsTable.name,
-        itemSize: orderItemsTable.size,
-        itemColor: orderItemsTable.color,
-        itemSlug: orderItemsTable.slug,
-        itemCreatedAt: orderItemsTable.created_at,
-        itemImage: orderItemsTable.image,
-      })
-      .from(ordersTable)
-      .innerJoin(orderItemsTable, eq(ordersTable.id, orderItemsTable.order_id))
-      .where(eq(ordersTable.id, orderId));
-
-    if (orderWithItems.length === 0) {
+    if (!isOwner) {
       return {success: false, error: 'Order not found'};
     }
-
-    const firstRow = orderWithItems[0];
-
-    const order = {
-      id: firstRow.orderId,
-      user_id: firstRow.orderUserId,
-      session_id: firstRow.orderSessionId,
-      total_amount: firstRow.orderTotalAmount,
-      payment_info: firstRow.orderPaymentInfo,
-      status: firstRow.orderStatus,
-      delivery_info: firstRow.orderDeliveryInfo,
-      created_at: firstRow.orderCreatedAt,
-      updated_at: firstRow.orderUpdatedAt,
-
-      order_items: orderWithItems.map((row) => ({
-        id: row.itemId,
-        order_id: row.itemOrderId,
-        product_id: row.itemProductId,
-        quantity: row.itemQuantity,
-        price: row.itemPrice,
-        name: row.itemName,
-        size: row.itemSize,
-        color: row.itemColor,
-        slug: row.itemSlug,
-        created_at: row.itemCreatedAt,
-        image: row.itemImage,
-      })),
-    };
 
     return {success: true, order};
   } catch (error) {
@@ -176,57 +137,28 @@ export async function getUserOrdersOverview() {
 
     if (!user) {
       console.error(
-        'Authentication error fetching user orders: User not authenticated'
+        'Authentication error fetching user orders: User not authenticated',
       );
       return {success: false, error: 'User not authenticated', orders: []};
     }
 
-    const ordersWithItems = await db
-      .select({
-        orderId: ordersTable.id,
-        orderCreatedAt: ordersTable.created_at,
-
-        itemOrderId: orderItemsTable.order_id,
-        itemImage: orderItemsTable.image,
-        itemName: orderItemsTable.name,
-      })
-      .from(ordersTable)
-      .innerJoin(orderItemsTable, eq(ordersTable.id, orderItemsTable.order_id))
-      .where(eq(ordersTable.user_id, user.id))
-      .orderBy(desc(ordersTable.created_at));
-
-    const orderMap = new Map<
-      string,
-      {
-        id: string;
-        created_at: Date;
-        order_items: Array<{
-          order_id: string;
-          image: string;
-          name: string;
-        }>;
-      }
-    >();
-
-    ordersWithItems.forEach((row) => {
-      const orderId = row.orderId;
-
-      if (!orderMap.has(orderId)) {
-        orderMap.set(orderId, {
-          id: row.orderId,
-          created_at: row?.orderCreatedAt || new Date(),
-          order_items: [],
-        });
-      }
-
-      orderMap.get(orderId)!.order_items.push({
-        order_id: row.itemOrderId,
-        image: row.itemImage,
-        name: row.itemName,
-      });
+    const orders = await db.query.ordersTable.findMany({
+      where: eq(ordersTable.user_id, user.id),
+      orderBy: desc(ordersTable.created_at),
+      columns: {
+        id: true,
+        created_at: true,
+      },
+      with: {
+        order_items: {
+          columns: {
+            order_id: true,
+            image: true,
+            name: true,
+          },
+        },
+      },
     });
-
-    const orders = Array.from(orderMap.values());
 
     return {success: true, orders};
   } catch (error) {

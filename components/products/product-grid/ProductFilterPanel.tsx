@@ -1,5 +1,6 @@
 'use client';
 
+import {memo} from 'react';
 import {Accordion} from '@/components/shared/ui/Accordion';
 import {CheckboxOption} from '@/components/shared/ui/CheckboxOption';
 import {RadioOption} from '@/components/shared/ui/RadioOption';
@@ -27,7 +28,7 @@ interface FilterPanelProps {
   hasActiveFilters: boolean;
 }
 
-export default function FilterPanel({
+function FilterPanel({
   dialogId,
   onDialogClose,
   metadata,
@@ -207,3 +208,5 @@ export default function FilterPanel({
     </ModalDialog>
   );
 }
+
+export default memo(FilterPanel);

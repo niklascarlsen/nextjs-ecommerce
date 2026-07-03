@@ -1,9 +1,10 @@
 'use client';
 
-import {useState, useMemo, useEffect} from 'react';
+import {useState, useCallback, useSyncExternalStore} from 'react';
 import {useRouter, usePathname, useSearchParams} from 'next/navigation';
 
 import {ProductCard} from '@/lib/types/db-types';
+import type {SearchMode} from '@/lib/types/query-types';
 import Link from 'next/link';
 import {ChevronRight} from 'lucide-react';
 import FilterBar from '@/components/products/product-grid/ProductFilterBar';
@@ -14,52 +15,66 @@ import type {GridLayout} from '@/components/products/product-grid/ProductGrid';
 
 const GRID_LAYOUT_STORAGE_KEY = 'product-grid-layout';
 
-interface ProductFilterWrapperProps {
+function getGridLayoutSnapshot(): GridLayout {
+  const saved = localStorage.getItem(GRID_LAYOUT_STORAGE_KEY);
+  if (saved === 'compact' || saved === 'comfortable') return saved;
+  return 'compact';
+}
+
+function subscribeGridLayout(onStoreChange: () => void) {
+  const notify = () => onStoreChange();
+  window.addEventListener('storage', notify);
+  window.addEventListener(GRID_LAYOUT_STORAGE_KEY, notify);
+  return () => {
+    window.removeEventListener('storage', notify);
+    window.removeEventListener(GRID_LAYOUT_STORAGE_KEY, notify);
+  };
+}
+
+type BaseProps = {
   initialProducts: ProductCard[];
   initialHasMore: boolean;
-  gender?: string;
-  category?: string;
-  genderCategoryTitle?: string;
   metadata?: {
     availableColors: string[];
     availableSizes: string[];
     availableCategories: string[];
   };
   className?: string;
-  totalCount?: number;
-}
+};
 
-export default function ProductFilterWrapper({
-  initialProducts,
-  initialHasMore,
-  gender,
-  category,
-  genderCategoryTitle,
-  metadata,
-  className = '',
-  totalCount,
-}: ProductFilterWrapperProps) {
+export type ProductFilterWrapperProps =
+  | (BaseProps & {
+      mode: 'category';
+      gender?: string;
+      category?: string;
+    })
+  | (BaseProps & {
+      mode: 'search';
+      query: string;
+      totalCount?: number;
+      initialSearchMode?: SearchMode;
+    });
+
+export default function ProductFilterWrapper(props: ProductFilterWrapperProps) {
+  const {initialProducts, initialHasMore, metadata, className = ''} = props;
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const filterDialogId = 'product-filter-dialog';
   const [isFilterDialogOpen, setIsFilterDialogOpen] = useState(false);
-  const [gridLayout, setGridLayout] = useState<GridLayout>('compact');
+  const gridLayout = useSyncExternalStore(
+    subscribeGridLayout,
+    getGridLayoutSnapshot,
+    (): GridLayout => 'compact',
+  );
 
-  // Restore the saved layout after mount. setState-in-effect is intentional:
-  // reading localStorage during render would cause an SSR hydration mismatch.
-  useEffect(() => {
-    const saved = localStorage.getItem(GRID_LAYOUT_STORAGE_KEY);
-    if (saved === 'compact' || saved === 'comfortable') {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration-safe restore
-      setGridLayout(saved);
-    }
+  const handleGridLayoutChange = useCallback((layout: GridLayout) => {
+    localStorage.setItem(GRID_LAYOUT_STORAGE_KEY, layout);
+    window.dispatchEvent(new Event(GRID_LAYOUT_STORAGE_KEY));
   }, []);
 
-  const handleGridLayoutChange = (layout: GridLayout) => {
-    setGridLayout(layout);
-    localStorage.setItem(GRID_LAYOUT_STORAGE_KEY, layout);
-  };
+  const openFilterDialog = useCallback(() => setIsFilterDialogOpen(true), []);
+  const closeFilterDialog = useCallback(() => setIsFilterDialogOpen(false), []);
 
   useScrollLock(isFilterDialogOpen);
 
@@ -81,30 +96,53 @@ export default function ProductFilterWrapper({
     setSortOrder(sortParam);
   }
 
-  const toggleColor = (color: string) => {
-    setSelectedColors((prev) =>
-      prev.includes(color) ? prev.filter((c) => c !== color) : [...prev, color],
-    );
-  };
+  const toggleColor = useCallback(
+    (color: string) => {
+      setSelectedColors((prev) =>
+        prev.includes(color)
+          ? prev.filter((c) => c !== color)
+          : [...prev, color],
+      );
+    },
+    [setSelectedColors],
+  );
 
-  const toggleSize = (size: string) => {
-    setSelectedSizes((prev) =>
-      prev.includes(size) ? prev.filter((s) => s !== size) : [...prev, size],
-    );
-  };
+  const toggleSize = useCallback(
+    (size: string) => {
+      setSelectedSizes((prev) =>
+        prev.includes(size) ? prev.filter((s) => s !== size) : [...prev, size],
+      );
+    },
+    [setSelectedSizes],
+  );
 
-  const toggleSort = (newSort: string) => {
-    setSortOrder((prev) => (prev === newSort ? null : newSort));
-  };
+  const toggleSort = useCallback(
+    (newSort: string) => {
+      setSortOrder((prev) => (prev === newSort ? null : newSort));
+    },
+    [setSortOrder],
+  );
 
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     setSelectedColors([]);
     setSelectedSizes([]);
     setSortOrder(null);
-    router.push(pathname);
-  };
+    // Keep unrelated params (e.g. the search query) intact
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('color');
+    params.delete('sizes');
+    params.delete('sort');
+    router.push(params.toString() ? `${pathname}?${params}` : pathname);
+  }, [
+    router,
+    pathname,
+    searchParams,
+    setSelectedColors,
+    setSelectedSizes,
+    setSortOrder,
+  ]);
 
-  const applyFilters = () => {
+  const applyFilters = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
     if (selectedColors.length) {
       params.set('color', selectedColors.join(','));
@@ -124,7 +162,14 @@ export default function ProductFilterWrapper({
 
     const url = params.toString() ? `${pathname}?${params}` : pathname;
     router.push(url);
-  };
+  }, [
+    router,
+    pathname,
+    searchParams,
+    selectedColors,
+    selectedSizes,
+    sortOrder,
+  ]);
 
   const hasActiveFilters =
     !!sortOrder || selectedColors.length > 0 || selectedSizes.length > 0;
@@ -135,62 +180,74 @@ export default function ProductFilterWrapper({
     selectedSizes.length > 0,
   ].filter(Boolean).length;
 
-  const pathParts = pathname.split('/');
+  const isCategoryPage =
+    props.mode === 'category' && !!props.gender && !!props.category;
+  const isGenderPage =
+    props.mode === 'category' && !!props.gender && !props.category;
 
-  const isGenderPage = pathParts.length === 3 && pathParts[1] === 'c';
-  const isCategoryPage = pathParts.length === 4 && pathParts[1] === 'c';
-  const currentGender = isGenderPage || isCategoryPage ? pathParts[2] : null;
+  const categories = isGenderPage ? (metadata?.availableCategories ?? []) : [];
 
-  // Unique categories for the current gender scope
-  const uniqueCategories = useMemo(() => {
-    if (!isGenderPage) return [];
-    return metadata?.availableCategories || [];
-  }, [isGenderPage, metadata]);
-
-  const showProductFilters = (totalCount ?? 0) > 0;
+  const showProductFilters = initialProducts.length > 0 || hasActiveFilters;
 
   return (
     <div className='relative text-xs font-semibold'>
-      {isCategoryPage && genderCategoryTitle && (
-        <div className='flex  items-center flex-row px-4 sm:px-8 gap-1.5 pt-2 my-2'>
-          <Link
-            href={`/c/${currentGender}`}
-            className='flex items-center uppercase gap-2  font-medium text-gray-500'
-          >
-            <span className='hover:text-black'>{currentGender}</span>
-          </Link>
-          <ChevronRight size={13} className='text-gray-500' />
-          <h2 className=' font-medium w-fit uppercase'>
-            {genderCategoryTitle === 'klanningar'
-              ? 'dresses'
-              : genderCategoryTitle}
-          </h2>
-        </div>
-      )}
+      {props.mode === 'category' &&
+        isCategoryPage &&
+        props.gender && (
+          <div className='flex  items-center flex-row px-4 sm:px-8 gap-1.5 pt-2 my-2'>
+            <Link
+              href={`/c/${props.gender}`}
+              className='flex items-center uppercase gap-2  font-medium text-gray-500'
+            >
+              <span className='hover:text-black'>{props.gender}</span>
+            </Link>
+            <ChevronRight size={13} className='text-gray-500' />
+            <h2 className=' font-medium w-fit uppercase'>
+              {props.category}
+            </h2>
+          </div>
+        )}
 
-      {isGenderPage && uniqueCategories.length > 0 && (
+      {isGenderPage && categories.length > 0 && (
         <div className='px-5 sm:px-8 my-2 pt-2'>
           <div className='flex flex-wrap gap-4 uppercase font-medium'>
             <div className='text-black'>All</div>
-            {uniqueCategories.map((category) => (
+            {categories.map((category) => (
               <Link
                 key={category}
                 href={`${pathname}/${category}`}
                 className=' text-gray-500 w-fit font-medium hover:text-black'
               >
-                {category === 'klanningar' ? 'dresses' : category}
+                {category}
               </Link>
             ))}
           </div>
         </div>
       )}
 
-      {/* --- Filter bar + filter panel (hidden when nothing matches) --- */}
+      {props.mode === 'search' && (
+        <h2 className='text-base md:text-base uppercase font-medium px-4 sm:px-8 pt-2 pb-2'>
+          {props.initialSearchMode === 'fuzzy' ? (
+            <>
+              No exact matches for &quot;{props.query}&quot; — showing similar
+              products
+            </>
+          ) : (
+            <>
+              Search results for &quot;{props.query}&quot;
+              {props.totalCount ? (
+                <span className='ml-2'>({props.totalCount})</span>
+              ) : null}
+            </>
+          )}
+        </h2>
+      )}
+
       {showProductFilters && (
         <>
           <FilterBar
             dialogId={filterDialogId}
-            onOpen={() => setIsFilterDialogOpen(true)}
+            onOpen={openFilterDialog}
             activeFilterCount={activeFilterCount}
             hasActiveFilters={hasActiveFilters}
             gridLayout={gridLayout}
@@ -198,7 +255,7 @@ export default function ProductFilterWrapper({
           />
           <FilterPanel
             dialogId={filterDialogId}
-            onDialogClose={() => setIsFilterDialogOpen(false)}
+            onDialogClose={closeFilterDialog}
             metadata={metadata}
             selectedColors={selectedColors}
             selectedSizes={selectedSizes}
@@ -213,17 +270,28 @@ export default function ProductFilterWrapper({
         </>
       )}
 
-      {/* --- Produktgrid --- */}
       <div className='pt-2'>
-        <InfiniteProductList
-          mode='category'
-          initialProducts={initialProducts}
-          gender={gender}
-          category={category}
-          className={className}
-          initialHasMore={initialHasMore}
-          gridLayout={gridLayout}
-        />
+        {props.mode === 'category' ? (
+          <InfiniteProductList
+            mode='category'
+            initialProducts={initialProducts}
+            gender={props.gender}
+            category={props.category}
+            className={className}
+            initialHasMore={initialHasMore}
+            gridLayout={gridLayout}
+          />
+        ) : (
+          <InfiniteProductList
+            mode='search'
+            initialProducts={initialProducts}
+            query={props.query}
+            initialSearchMode={props.initialSearchMode}
+            className={className}
+            initialHasMore={initialHasMore}
+            gridLayout={gridLayout}
+          />
+        )}
       </div>
     </div>
   );
