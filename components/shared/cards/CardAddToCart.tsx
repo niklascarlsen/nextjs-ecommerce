@@ -41,8 +41,10 @@ export default function CardAddToCart({
       <div
         className={twMerge(
           'hidden pointer-fine:block absolute inset-x-0 bottom-0 z-10 overflow-hidden bg-gray-50/90',
-          'h-0 transition-[height] duration-300 ease-out',
-          'group-hover:h-11 sm:group-hover:h-13 group-focus-within:h-11 sm:group-focus-within:h-13',
+          // invisible while collapsed to avoid hint targets (e.g. Vimium)
+          'invisible h-0 transition-[height] duration-300 ease-out',
+          'group-hover:visible group-hover:h-11 sm:group-hover:h-13',
+          'group-focus-within:visible group-focus-within:h-11 sm:group-focus-within:h-13',
         )}
       >
         <div className='flex h-11 items-center justify-center gap-1 px-2'>
