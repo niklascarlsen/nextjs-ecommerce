@@ -21,12 +21,7 @@ type DisplayedForm = {
 export default function FormWrapper({onClose}: {onClose: () => void}) {
   const {activeSidebar, editData} = useAdmin();
   const titleId = useId();
-
   const isFormOpen = activeSidebar !== null;
-
-  // Keep the active form mounted while the dialog plays its close animation so
-  // the panel doesn't flash empty while sliding out. A new session id remounts
-  // the form on each open so react-hook-form re-seeds its defaults.
   const [displayed, setDisplayed] = useState<DisplayedForm | null>(null);
   const sessionRef = useRef(0);
 
@@ -41,16 +36,6 @@ export default function FormWrapper({onClose}: {onClose: () => void}) {
     }
   }, [activeSidebar, editData]);
 
-  // Opening is owned by the browser: trigger buttons use the Invoker Commands
-  // API (command="show-modal" / commandfor) so the native <dialog> gets proper
-  // modality, focus trapping and Escape handling. React only handles the rest:
-  //
-  // - On open, native showModal lands focus on the first tabbable control, so
-  //   move it to the heading instead (FocusHeading carries [data-initial-focus]).
-  // - On a React-driven close (a successful submit calls closeSidebar), reflect
-  //   that single close onto the dialog and unmount the form after its
-  //   close animation finishes. User-driven closes (X button, backdrop, Escape)
-  //   are handled natively and only sync React state back via onClose.
   useEffect(() => {
     const dialog = document.getElementById(
       ADMIN_FORM_DIALOG_ID,
@@ -63,8 +48,6 @@ export default function FormWrapper({onClose}: {onClose: () => void}) {
     }
 
     if (dialog.open) dialog.close();
-    const timer = setTimeout(() => setDisplayed(null), 500);
-    return () => clearTimeout(timer);
   }, [isFormOpen]);
 
   const isEditMode = displayed?.data != null;

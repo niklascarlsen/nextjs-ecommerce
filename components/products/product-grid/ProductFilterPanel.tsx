@@ -60,6 +60,7 @@ function FilterPanel({
 
   return (
     <ModalDialog
+      // keepMounted={true}
       id={dialogId}
       variant='right'
       className='w-full max-w-full md:max-w-[500px]'
